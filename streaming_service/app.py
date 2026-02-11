@@ -85,6 +85,16 @@ def _validate_config(payload: dict) -> tuple[Optional[SessionConfig], list[str]]
         errors.append(f"'observation_mode' must be one of: vision, text, both. Got '{obs_mode}'.")
         obs_mode = "vision"
 
+    max_memory = payload.get("max_memory", 10)
+    if not isinstance(max_memory, int) or max_memory < 1 or max_memory > 100:
+        errors.append("'max_memory' must be an integer between 1 and 100.")
+        max_memory = 10
+
+    seed = payload.get("seed")
+    if seed is not None and not isinstance(seed, int):
+        errors.append("'seed' must be an integer or null.")
+        seed = None
+
     if errors:
         return None, errors
 
@@ -95,8 +105,8 @@ def _validate_config(payload: dict) -> tuple[Optional[SessionConfig], list[str]]
         max_steps=max_steps,
         observation_mode=obs_mode,
         harness=bool(payload.get("harness", False)),
-        max_memory=int(payload.get("max_memory", 10)),
-        seed=payload.get("seed"),
+        max_memory=max_memory,
+        seed=seed,
     ), []
 
 
@@ -210,40 +220,52 @@ async def ws_play(ws: WebSocket):
             # Start the producer in a background thread.
             producer_future = loop.run_in_executor(None, _produce_frames)
 
-            # Consume frames from the queue and send over WebSocket.
-            while True:
-                item = await loop.run_in_executor(None, frame_queue.get)
+            # Listen for client stop/disconnect in a concurrent task
+            # instead of polling with a 10ms timeout on every step.
+            stop_event = asyncio.Event()
 
-                # Sentinel: generator finished.
-                if item is None:
-                    break
-
-                # Exception from the producer thread.
-                if isinstance(item, Exception):
-                    raise item
-
-                # Normal frame dict.
-                if not await _safe_send(ws, item):
-                    cancelled = True
-                    break
-
-                if item.get("done"):
-                    break
-
-                # Check for a client "stop" message (non-blocking).
+            async def _listen_for_stop():
                 try:
-                    client_msg = await asyncio.wait_for(
-                        ws.receive_text(), timeout=0.01
-                    )
-                    try:
-                        client_payload = json.loads(client_msg)
-                        if client_payload.get("type") == "stop":
-                            cancelled = True
-                            break
-                    except json.JSONDecodeError:
-                        pass
-                except asyncio.TimeoutError:
-                    pass
+                    while True:
+                        raw = await ws.receive_text()
+                        try:
+                            msg = json.loads(raw)
+                            if msg.get("type") == "stop":
+                                stop_event.set()
+                                return
+                        except json.JSONDecodeError:
+                            pass
+                except (WebSocketDisconnect, Exception):
+                    stop_event.set()
+
+            listener_task = asyncio.create_task(_listen_for_stop())
+
+            # Consume frames from the queue and send over WebSocket.
+            try:
+                while True:
+                    item = await loop.run_in_executor(None, frame_queue.get)
+
+                    # Sentinel: generator finished.
+                    if item is None:
+                        break
+
+                    # Exception from the producer thread.
+                    if isinstance(item, Exception):
+                        raise item
+
+                    # Normal frame dict.
+                    if not await _safe_send(ws, item):
+                        cancelled = True
+                        break
+
+                    if item.get("done"):
+                        break
+
+                    if stop_event.is_set():
+                        cancelled = True
+                        break
+            finally:
+                listener_task.cancel()
 
             # Wait for the producer thread to finish.
             await producer_future
