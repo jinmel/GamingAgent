@@ -2,14 +2,25 @@
 
 import asyncio
 import json
+import logging
+import queue
 import traceback
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
-from .config import SUPPORTED_GAMES, GAME_REGISTRY, SessionConfig
+from .config import (
+    SUPPORTED_GAMES,
+    GAME_REGISTRY,
+    SessionConfig,
+    MAX_STEPS_LIMIT,
+    MODEL_NAME_PATTERN,
+    MAX_MODEL_NAME_LENGTH,
+)
 from .game_session import GameSession
+
+logger = logging.getLogger("streaming_service")
 
 app = FastAPI(
     title="GamingAgent Streaming Service",
@@ -19,6 +30,10 @@ app = FastAPI(
 
 # Timeout (seconds) for the client to send the initial config message.
 CONFIG_RECEIVE_TIMEOUT = 30.0
+
+# Maximum number of concurrent game sessions.
+_MAX_CONCURRENT_SESSIONS = 3
+_session_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_SESSIONS)
 
 
 # ── Health / info endpoints ──────────────────────────────────────────────────
@@ -50,11 +65,20 @@ def _validate_config(payload: dict) -> tuple[Optional[SessionConfig], list[str]]
 
     if not model_name:
         errors.append("'model_name' is required.")
+    elif not isinstance(model_name, str):
+        errors.append("'model_name' must be a string.")
+    elif len(model_name) > MAX_MODEL_NAME_LENGTH:
+        errors.append(f"'model_name' exceeds max length of {MAX_MODEL_NAME_LENGTH}.")
+    elif not MODEL_NAME_PATTERN.match(model_name):
+        errors.append("'model_name' contains invalid characters.")
 
     max_steps = payload.get("max_steps", 200)
     if not isinstance(max_steps, int) or max_steps < 1:
         errors.append("'max_steps' must be a positive integer.")
         max_steps = 200
+    elif max_steps > MAX_STEPS_LIMIT:
+        errors.append(f"'max_steps' exceeds limit of {MAX_STEPS_LIMIT}.")
+        max_steps = MAX_STEPS_LIMIT
 
     obs_mode = payload.get("observation_mode", "vision")
     if obs_mode not in ("vision", "text", "both"):
@@ -120,88 +144,126 @@ async def ws_play(ws: WebSocket):
     """
     await ws.accept()
 
+    # ── Enforce concurrency limit ────────────────────────────────────────
+    if _session_semaphore.locked():
+        await _safe_send(ws, {
+            "type": "error",
+            "message": f"Server at capacity ({_MAX_CONCURRENT_SESSIONS} concurrent sessions).",
+        })
+        await ws.close(code=1013)
+        return
+
     session: Optional[GameSession] = None
-    try:
-        # ── 1. Receive config (with timeout) ─────────────────────────────
+    async with _session_semaphore:
         try:
-            raw = await asyncio.wait_for(
-                ws.receive_text(), timeout=CONFIG_RECEIVE_TIMEOUT
-            )
-        except asyncio.TimeoutError:
+            # ── 1. Receive config (with timeout) ─────────────────────────
+            try:
+                raw = await asyncio.wait_for(
+                    ws.receive_text(), timeout=CONFIG_RECEIVE_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                await _safe_send(ws, {
+                    "type": "error",
+                    "message": f"No config received within {CONFIG_RECEIVE_TIMEOUT}s.",
+                })
+                return
+
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                await _safe_send(ws, {"type": "error", "message": "Invalid JSON."})
+                return
+
+            cfg, errors = _validate_config(payload)
+            if errors:
+                await _safe_send(ws, {"type": "error", "message": " ".join(errors)})
+                return
+
+            await _safe_send(ws, {
+                "type": "session_start",
+                "game": cfg.game_name,
+                "model": cfg.model_name,
+            })
+
+            # ── 2. Run game loop in a thread ─────────────────────────────
+            # Use a thread-safe queue to decouple the synchronous game
+            # generator (running in a worker thread) from the async
+            # WebSocket sender. This avoids sharing the generator across
+            # threads and prevents the StopIteration-through-await bug.
+            session = GameSession(cfg)
+            frame_queue: queue.Queue = queue.Queue(maxsize=2)
+            loop = asyncio.get_running_loop()
+            cancelled = False
+
+            def _produce_frames():
+                """Run the entire sync generator in a single thread,
+                pushing each frame into the queue. A None sentinel
+                signals the end of the stream."""
+                try:
+                    for frame in session.run():
+                        frame_queue.put(frame)
+                except Exception as exc:
+                    frame_queue.put(exc)
+                finally:
+                    frame_queue.put(None)  # sentinel
+
+            # Start the producer in a background thread.
+            producer_future = loop.run_in_executor(None, _produce_frames)
+
+            # Consume frames from the queue and send over WebSocket.
+            while True:
+                item = await loop.run_in_executor(None, frame_queue.get)
+
+                # Sentinel: generator finished.
+                if item is None:
+                    break
+
+                # Exception from the producer thread.
+                if isinstance(item, Exception):
+                    raise item
+
+                # Normal frame dict.
+                if not await _safe_send(ws, item):
+                    cancelled = True
+                    break
+
+                if item.get("done"):
+                    break
+
+                # Check for a client "stop" message (non-blocking).
+                try:
+                    client_msg = await asyncio.wait_for(
+                        ws.receive_text(), timeout=0.01
+                    )
+                    try:
+                        client_payload = json.loads(client_msg)
+                        if client_payload.get("type") == "stop":
+                            cancelled = True
+                            break
+                    except json.JSONDecodeError:
+                        pass
+                except asyncio.TimeoutError:
+                    pass
+
+            # Wait for the producer thread to finish.
+            await producer_future
+
+            # ── 3. Signal completion ─────────────────────────────────────
+            if not cancelled:
+                await _safe_send(ws, {"type": "session_end"})
+
+        except WebSocketDisconnect:
+            pass  # Client disconnected — clean up silently.
+        except Exception as exc:
+            logger.error("[ws_play] Error: %s\n%s", exc, traceback.format_exc())
             await _safe_send(ws, {
                 "type": "error",
-                "message": f"No config received within {CONFIG_RECEIVE_TIMEOUT}s.",
+                "message": "Internal server error. Check server logs.",
             })
-            return
-
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            await _safe_send(ws, {"type": "error", "message": "Invalid JSON."})
-            return
-
-        cfg, errors = _validate_config(payload)
-        if errors:
-            await _safe_send(ws, {"type": "error", "message": " ".join(errors)})
-            return
-
-        await _safe_send(ws, {
-            "type": "session_start",
-            "game": cfg.game_name,
-            "model": cfg.model_name,
-        })
-
-        # ── 2. Run game loop in a thread ─────────────────────────────────
-        session = GameSession(cfg)
-        loop = asyncio.get_running_loop()
-        gen = session.run()
-        cancelled = False
-
-        def _next_frame():
-            return next(gen)
-
-        while True:
-            # Run the synchronous generator step in a thread pool.
+        finally:
+            if session is not None:
+                session.close()
             try:
-                frame = await loop.run_in_executor(None, _next_frame)
-            except StopIteration:
-                break
-
-            # Send the frame; bail if the client disconnected.
-            if not await _safe_send(ws, frame):
-                cancelled = True
-                break
-
-            if frame.get("done"):
-                break
-
-            # Check for a client "stop" message (non-blocking).
-            try:
-                client_msg = await asyncio.wait_for(ws.receive_text(), timeout=0.01)
-                try:
-                    client_payload = json.loads(client_msg)
-                    if client_payload.get("type") == "stop":
-                        cancelled = True
-                        break
-                except json.JSONDecodeError:
-                    pass  # Ignore malformed client messages mid-session.
-            except asyncio.TimeoutError:
-                pass  # No client message — continue game loop.
-
-        # ── 3. Signal completion ─────────────────────────────────────────
-        if not cancelled:
-            await _safe_send(ws, {"type": "session_end"})
-
-    except WebSocketDisconnect:
-        pass  # Client disconnected — clean up silently.
-    except Exception as exc:
-        tb = traceback.format_exc()
-        print(f"[ws_play] Error: {exc}\n{tb}")
-        await _safe_send(ws, {"type": "error", "message": str(exc)})
-    finally:
-        if session is not None:
-            session.close()
-        try:
-            await ws.close()
-        except Exception:
-            pass
+                await ws.close()
+            except Exception:
+                pass

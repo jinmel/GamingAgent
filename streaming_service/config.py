@@ -1,7 +1,8 @@
 """Configuration and game registry for the streaming service."""
 
 import os
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from typing import Dict, Optional
 
 # Map user-facing game names to internal names and config directory names
@@ -27,6 +28,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIGS_ROOT = os.path.join(PROJECT_ROOT, "gamingagent", "configs")
 ENVS_ROOT = os.path.join(PROJECT_ROOT, "gamingagent", "envs")
 
+# Limits
+MAX_STEPS_LIMIT = 500
+MAX_MODEL_NAME_LENGTH = 128
+MODEL_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_./:@-]+$")
+
 
 @dataclass
 class SessionConfig:
@@ -41,6 +47,9 @@ class SessionConfig:
     max_memory: int = 10
     seed: Optional[int] = None
 
+    def __post_init__(self):
+        self.max_steps = max(1, min(self.max_steps, MAX_STEPS_LIMIT))
+
     @property
     def internal_game_name(self) -> str:
         return GAME_REGISTRY[self.game_name]["internal_name"]
@@ -50,7 +59,7 @@ class SessionConfig:
         return GAME_REGISTRY[self.game_name]["config_dir"]
 
     @property
-    def agent_prompts_path(self) -> str:
+    def agent_prompts_path(self) -> Optional[str]:
         path = os.path.join(CONFIGS_ROOT, self.config_dir_name, "module_prompts.json")
         return path if os.path.isfile(path) else None
 

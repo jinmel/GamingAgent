@@ -5,9 +5,11 @@ import datetime
 import json
 import os
 import time
-from typing import AsyncGenerator, Dict, Any, Optional
+import uuid
+from collections.abc import Iterator
+from typing import Any, Dict, Optional
 
-from .config import SessionConfig, PROJECT_ROOT, ENVS_ROOT
+from .config import SessionConfig, PROJECT_ROOT
 
 
 def _create_environment(cfg: SessionConfig, cache_dir: str):
@@ -119,17 +121,20 @@ class GameSession:
 
     def __init__(self, cfg: SessionConfig):
         self.cfg = cfg
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Use microseconds + short UUID to avoid cache directory collisions
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        suffix = uuid.uuid4().hex[:6]
         model_short = cfg.model_name[:15].replace("-", "_")
         self.cache_dir = os.path.join(
-            PROJECT_ROOT, "cache", cfg.internal_game_name, model_short, ts
+            PROJECT_ROOT, "cache", cfg.internal_game_name,
+            model_short, f"{ts}_{suffix}",
         )
         os.makedirs(self.cache_dir, exist_ok=True)
 
         self.env = None
         self.agent = None
 
-    def run(self) -> "Generator[Dict[str, Any], None, None]":
+    def run(self) -> Iterator[Dict[str, Any]]:
         """Synchronous generator that yields one dict per game step.
 
         Each dict matches the wire format:
