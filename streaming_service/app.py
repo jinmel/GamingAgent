@@ -49,6 +49,100 @@ async def list_games():
     return {"games": SUPPORTED_GAMES}
 
 
+@app.get("/ws-docs")
+async def ws_docs():
+    """WebSocket protocol documentation for /ws/play (not covered by OpenAPI)."""
+    return {
+        "endpoint": "ws://<host>/ws/play",
+        "protocol": {
+            "1_connect": "Open a WebSocket connection to /ws/play.",
+            "2_send_config": "Send a JSON config message within 30 seconds.",
+            "3_receive_frames": "Server streams JSON frame messages until done.",
+            "4_session_end": "Server sends {\"type\": \"session_end\"} when the game finishes.",
+            "5_client_stop": "Client may send {\"type\": \"stop\"} at any time to abort.",
+        },
+        "config_message": {
+            "game_name": {
+                "type": "string",
+                "required": True,
+                "enum": SUPPORTED_GAMES,
+                "description": "Game to play.",
+            },
+            "model_name": {
+                "type": "string",
+                "required": True,
+                "description": f"LLM model identifier. Max {MAX_MODEL_NAME_LENGTH} chars, "
+                               f"allowed chars: a-z A-Z 0-9 _ . / : @ -",
+            },
+            "prompt": {
+                "type": "string",
+                "required": False,
+                "default": "",
+                "description": "Custom prompt or instructions for the agent.",
+            },
+            "max_steps": {
+                "type": "integer",
+                "required": False,
+                "default": 200,
+                "description": f"Maximum game steps. Range: 1–{MAX_STEPS_LIMIT}.",
+            },
+            "observation_mode": {
+                "type": "string",
+                "required": False,
+                "default": "vision",
+                "enum": ["vision", "text", "both"],
+                "description": "How the agent observes the game state.",
+            },
+            "harness": {
+                "type": "boolean",
+                "required": False,
+                "default": False,
+                "description": "Enable perception-memory-reasoning pipeline.",
+            },
+            "max_memory": {
+                "type": "integer",
+                "required": False,
+                "default": 10,
+                "description": "Max trajectory entries in agent memory. Range: 1–100.",
+            },
+            "seed": {
+                "type": "integer|null",
+                "required": False,
+                "default": None,
+                "description": "Random seed for environment reproducibility.",
+            },
+        },
+        "server_messages": {
+            "session_start": {
+                "type": "session_start",
+                "game": "string — game name",
+                "model": "string — model name",
+            },
+            "frame": {
+                "type": "frame",
+                "step": "integer — 0-indexed step number",
+                "image": "string — base64-encoded PNG screenshot",
+                "thought": "string — LLM reasoning for the action",
+                "action": "string — action taken (e.g. 'up', 'down', 'left', 'right')",
+                "reward": "float — reward received this step",
+                "done": "boolean — true if game has ended",
+            },
+            "session_end": {
+                "type": "session_end",
+            },
+            "error": {
+                "type": "error",
+                "message": "string — error description",
+            },
+        },
+        "limits": {
+            "max_concurrent_sessions": _MAX_CONCURRENT_SESSIONS,
+            "config_timeout_seconds": CONFIG_RECEIVE_TIMEOUT,
+            "max_steps_limit": MAX_STEPS_LIMIT,
+        },
+    }
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _validate_config(payload: dict) -> tuple[Optional[SessionConfig], list[str]]:
