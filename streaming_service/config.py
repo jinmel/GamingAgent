@@ -1,9 +1,36 @@
 """Configuration and game registry for the streaming service."""
 
+import enum
 import os
 import re
 from dataclasses import dataclass
 from typing import Dict, Optional
+
+
+class SessionStatus(str, enum.Enum):
+    """Lifecycle status of a game session.
+
+    running    – game loop is actively producing frames
+    completed  – game ended naturally (env returned done=True)
+    exhausted  – hit max_steps without the env signalling done
+    cancelled  – client sent {"type":"stop"} or disconnected
+    failed     – unhandled server-side exception
+    deleted    – soft-deleted via the REST API
+    """
+    RUNNING = "running"
+    COMPLETED = "completed"
+    EXHAUSTED = "exhausted"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+    DELETED = "deleted"
+
+# Database
+DATABASE_URL: str = os.environ.get(
+    "DATABASE_URL", "postgresql://localhost:5432/gamingagent"
+)
+
+# How often (in steps) to auto-save a checkpoint during a game session.
+CHECKPOINT_INTERVAL: int = int(os.environ.get("CHECKPOINT_INTERVAL", "50"))
 
 # Map user-facing game names to internal names and config directory names
 GAME_REGISTRY: Dict[str, Dict[str, str]] = {

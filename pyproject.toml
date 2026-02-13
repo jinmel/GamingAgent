@@ -38,7 +38,8 @@ dependencies = [
     "psutil",
     "vizdoom",
     "pettingzoo",
-    "xai_sdk"
+    "xai_sdk",
+    "asyncpg>=0.29.0"
 ]
 license = {text = "MIT"}
 repository = "https://github.com/lmgame-org/GamingAgent"

@@ -24,3 +24,4 @@ psutil
 vizdoom
 pettingzoo
 xai_sdk
+asyncpg>=0.29.0
