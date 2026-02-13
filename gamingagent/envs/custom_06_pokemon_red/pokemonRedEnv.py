@@ -544,11 +544,31 @@ class PokemonRedEnv(Env):
         """Save the complete state of the emulator to a file"""
         if not self.pyboy:
             raise RuntimeError("Environment not initialized. Call reset() first.")
-            
+
         with open(state_filename, "wb") as f:
             self.pyboy.save_state(f)
-        
+
         return f"State saved successfully to {state_filename}"
+
+    def get_state(self) -> dict:
+        """Serialize emulator state for checkpointing.
+
+        The emulator state is binary (~300KB), so we save it to a file
+        in the cache directory and return the path reference.
+        """
+        if not self.pyboy:
+            raise RuntimeError("Environment not initialized. Call reset() first.")
+        state_path = os.path.join(
+            self.adapter.agent_cache_dir,
+            f"checkpoint_emu_e{self.adapter.current_episode_id}_s{self.adapter.current_step_num}.state",
+        )
+        self.save_state(state_path)
+        return {"emulator_state_path": state_path}
+
+    def set_state(self, state: dict) -> None:
+        """Restore emulator state from a checkpoint."""
+        path = state["emulator_state_path"]
+        self.load_state(path)
 
     def press_buttons(self, buttons, wait=True):
         """Press a sequence of buttons on the Game Boy"""

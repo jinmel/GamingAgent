@@ -362,9 +362,25 @@ class GymEnvAdapter:
             self.episode_log_file_handle = None
             self.episode_log_file_path = None
 
+    def get_state(self) -> dict:
+        """Serialize adapter state for checkpointing."""
+        return {
+            "current_episode_id": self.current_episode_id,
+            "current_step_num": self.current_step_num,
+            "_last_observation_hash": self._last_observation_hash,
+            "_unchanged_obs_count": self._unchanged_obs_count,
+        }
+
+    def set_state(self, state: dict) -> None:
+        """Restore adapter state from a checkpoint."""
+        self.current_episode_id = state["current_episode_id"]
+        self.current_step_num = state["current_step_num"]
+        self._last_observation_hash = state["_last_observation_hash"]
+        self._unchanged_obs_count = state["_unchanged_obs_count"]
+
     def increment_step(self):
         """Increments the current step number for the episode."""
-        self.current_step_num +=1 
+        self.current_step_num +=1
 
     def record_episode_result(self, episode_id: int, score: float, steps: int, total_reward: float, total_perf_score: float):
         """

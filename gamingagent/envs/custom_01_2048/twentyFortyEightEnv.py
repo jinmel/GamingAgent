@@ -477,6 +477,24 @@ class TwentyFortyEightEnv(gym.Env):
                 np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
             )
 
+    def get_state(self) -> dict:
+        """Serialize the game state for checkpointing."""
+        return {
+            "board": self.board.tolist(),
+            "total_score": int(self.total_score),
+            "step_score": int(self.step_score),
+            "illegal_move_count": int(self.illegal_move_count),
+            "is_legal_move": bool(self.is_legal_move),
+        }
+
+    def set_state(self, state: dict) -> None:
+        """Restore the game state from a checkpoint."""
+        self.board = np.array(state["board"], dtype=np.uint8)
+        self.total_score = state["total_score"]
+        self.step_score = state["step_score"]
+        self.illegal_move_count = state["illegal_move_count"]
+        self.is_legal_move = state["is_legal_move"]
+
     def close(self) -> None:
         if self.window is not None:
             pygame.display.quit()

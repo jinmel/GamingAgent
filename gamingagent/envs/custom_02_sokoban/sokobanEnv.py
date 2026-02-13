@@ -690,6 +690,36 @@ class SokobanEnv(gym.Env):
         pygame.display.flip()
         self.clock.tick(self.metadata["render_fps"])
 
+    def get_state(self) -> dict:
+        """Serialize the game state for checkpointing."""
+        return {
+            "room_fixed": self.room_fixed.tolist() if self.room_fixed is not None else None,
+            "room_state": self.room_state.tolist() if self.room_state is not None else None,
+            "player_position": self.player_position.tolist() if self.player_position is not None else None,
+            "boxes_on_target": int(self.boxes_on_target),
+            "num_env_steps": int(self.num_env_steps),
+            "current_level": int(self.current_level),
+            "num_boxes_current": int(self.num_boxes_current),
+            "current_reward_last_step": float(self.current_reward_last_step),
+            "previous_boxes_on_target_for_perf": int(self.previous_boxes_on_target_for_perf),
+            "current_episode_cumulative_perf_score": float(self.current_episode_cumulative_perf_score),
+            "cumulative_boxes_on_target_completed": int(self.cumulative_boxes_on_target_completed),
+        }
+
+    def set_state(self, state: dict) -> None:
+        """Restore the game state from a checkpoint."""
+        self.room_fixed = np.array(state["room_fixed"], dtype=np.uint8) if state["room_fixed"] is not None else None
+        self.room_state = np.array(state["room_state"], dtype=np.uint8) if state["room_state"] is not None else None
+        self.player_position = np.array(state["player_position"]) if state["player_position"] is not None else None
+        self.boxes_on_target = state["boxes_on_target"]
+        self.num_env_steps = state["num_env_steps"]
+        self.current_level = state["current_level"]
+        self.num_boxes_current = state["num_boxes_current"]
+        self.current_reward_last_step = state["current_reward_last_step"]
+        self.previous_boxes_on_target_for_perf = state["previous_boxes_on_target_for_perf"]
+        self.current_episode_cumulative_perf_score = state["current_episode_cumulative_perf_score"]
+        self.cumulative_boxes_on_target_completed = state["cumulative_boxes_on_target_completed"]
+
     def close(self):
         if self.window is not None:
             pygame.display.quit()
