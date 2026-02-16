@@ -1,0 +1,93 @@
+# virtual env and running logs
+lmgame-bench-env/*
+logs/*
+eval/perf/*
+
+# 💾 Cache and Temporary Files
+_dummy/*
+videos/*
+cache/*
+*/cache
+__pycache__/
+*/__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# 🔧 Compiled Binaries and Object Files
+*.o
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.a
+*.lib
+*.obj
+
+# 📄 Logs and Debug Files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# 📌 Build and Dependency Directories
+bin/
+build/
+dist/
+*.egg-info/
+*.manifest
+*.spec
+
+# 🏗️ Make and CMake Files
+CMakeFiles/
+CMakeCache.txt
+Makefile
+cmake_install.cmake
+
+# 🚀 Virtual Environment (Python)
+venv/
+.env/
+.venv/
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 📝 IDE and Editor Specific Files
+.vscode/
+.idea/
+*.iml
+
+# 🔒 OS-Specific Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 📝 Environment Variables
+setup_env.sh
+.env
+
+# 🎮 ROM and Game Files
+*.sfc
+*.nes
+*.a26
+*.gb
+*.gba
+*.gbc
+*.gg
+*.pce
+*.sms
+*.bk2
+*.rom
+*.ram
+custom_integrations/roms/
+*.state
+*.sha
+
+perf/
+
+logs/
+
+eval/video_samples/*
+
+*.ini

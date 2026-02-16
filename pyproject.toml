@@ -1,0 +1,51 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "GamingAgent"
+version = "0.1.0"
+description = "LMGame Bench and Gaming Agent"
+readme = "README.md"
+authors = [
+    { name = "Lanxiang Hu", email = "lah003@ucsd.edu" },
+    { name = "Yuxuan Zhang", email = "yuz165@ucsd.edu" },
+    { name = "Haoyang Yu", email = "vica031106@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic==0.49.0",
+    "mss==10.0.0",
+    "numpy==1.24.4",
+    "openai",
+    "opencv_python",
+    "opencv_python_headless",
+    "protobuf",
+    "pyautogui==0.9.54",
+    "pygame==2.6.1",
+    "PyGetWindow==0.0.9",
+    "google-generativeai==0.8.4",
+    "google.genai==1.5.0",
+    "pyyaml==6.0.2",
+    "gym",
+    "stable-retro",
+    "together",
+    "gymnasium",
+    "gymnasium_2048",
+    "tile_match_gym",
+    "tiktoken",
+    "pyboy",
+    "psutil",
+    "vizdoom",
+    "pettingzoo",
+    "xai_sdk",
+    "asyncpg>=0.29.0",
+    "python-dotenv>=1.0.0"
+]
+license = {text = "MIT"}
+
+[project.urls]
+Repository = "https://github.com/lmgame-org/GamingAgent"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
