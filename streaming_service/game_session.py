@@ -272,6 +272,7 @@ class GameSession:
                 "action": "",
                 "reward": 0.0,
                 "done": False,
+                "game_state": None,
             }
         else:
             # Normal start.
@@ -292,6 +293,7 @@ class GameSession:
                 "action": "",
                 "reward": 0.0,
                 "done": False,
+                "game_state": info if info else None,
             }
 
         for step in range(start_step + 1, self.cfg.max_steps + 1):
@@ -328,6 +330,7 @@ class GameSession:
                 "action": action_str,
                 "reward": float(reward),
                 "done": done,
+                "game_state": info if info else None,
             }
 
             if done:

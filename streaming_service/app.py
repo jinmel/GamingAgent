@@ -13,7 +13,8 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.websockets import WebSocketState
 
 from . import db
@@ -58,6 +59,13 @@ app = FastAPI(
     description="WebSocket-based streaming service for watching LLM agents play games.",
     version="0.2.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -162,6 +170,8 @@ async def ws_docs():
                 "game": "string - game name",
                 "model": "string - model name",
                 "session_id": "string - UUID of the session (if DB available)",
+                "max_steps": "integer - maximum number of game steps",
+                "observation_mode": "string - 'vision', 'text', or 'both'",
             },
             "frame": {
                 "type": "frame",
@@ -171,8 +181,15 @@ async def ws_docs():
                 "action": "string - action taken (e.g. 'up', 'down', 'left', 'right')",
                 "reward": "float - reward received this step",
                 "done": "boolean - true if game has ended",
+                "game_state": "object|null - game-specific state dict (board, score, etc.)",
             },
-            "session_end": {"type": "session_end"},
+            "session_end": {
+                "type": "session_end",
+                "session_id": "string - UUID of the session (if DB available)",
+                "status": "string - final session status",
+                "total_steps": "integer - total steps played",
+                "total_reward": "float - cumulative reward",
+            },
             "error": {"type": "error", "message": "string - error description"},
         },
         "limits": {
@@ -241,6 +258,49 @@ async def api_delete_session(session_id: str):
     if not ok:
         return JSONResponse({"error": "Session not found or already deleted"}, status_code=404)
     return {"deleted": True}
+
+
+@app.get("/sessions/{session_id}/summary")
+async def api_session_summary(session_id: str):
+    """Quick stats for a session without fetching all frames."""
+    if not db.is_available():
+        return JSONResponse({"error": "Database not available"}, status_code=503)
+    row = await db.get_session(session_id)
+    if row is None:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+    duration_seconds = None
+    if row.get("completed_at") and row.get("created_at"):
+        delta = row["completed_at"] - row["created_at"]
+        duration_seconds = round(delta.total_seconds(), 2)
+    return {
+        "session_id": str(row["id"]),
+        "game": row["game_name"],
+        "model": row["model_name"],
+        "status": row["status"],
+        "total_steps": row.get("total_steps", 0),
+        "total_reward": row.get("total_reward", 0.0),
+        "duration_seconds": duration_seconds,
+        "created_at": row.get("created_at"),
+        "completed_at": row.get("completed_at"),
+    }
+
+
+@app.get("/sessions/{session_id}/frames/{step}/image")
+async def api_get_frame_image(session_id: str, step: int):
+    """Serve the PNG screenshot for a specific frame from the cache directory."""
+    if not db.is_available():
+        return JSONResponse({"error": "Database not available"}, status_code=503)
+    row = await db.get_session(session_id)
+    if row is None:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+    cache_dir = row.get("cache_dir")
+    if not cache_dir:
+        return JSONResponse({"error": "No cache directory for this session"}, status_code=404)
+    # Images follow the pattern: {cache_dir}/observations/env_obs_e001_s{step:04d}.png
+    img_path = os.path.join(cache_dir, "observations", f"env_obs_e001_s{step:04d}.png")
+    if not os.path.isfile(img_path):
+        return JSONResponse({"error": f"Image not found for step {step}"}, status_code=404)
+    return FileResponse(img_path, media_type="image/png")
 
 
 @app.get("/sessions/{session_id}/checkpoints")
@@ -556,6 +616,8 @@ async def ws_play(ws: WebSocket):
                 "type": "session_start",
                 "game": cfg.game_name,
                 "model": cfg.model_name,
+                "max_steps": cfg.max_steps,
+                "observation_mode": cfg.observation_mode,
             }
             if db_session_id:
                 start_msg["session_id"] = db_session_id
@@ -649,7 +711,15 @@ async def ws_play(ws: WebSocket):
                 final_status = SessionStatus.EXHAUSTED
 
             if not cancelled:
-                await _safe_send(ws, {"type": "session_end"})
+                end_msg = {
+                    "type": "session_end",
+                    "status": final_status.value,
+                    "total_steps": session.total_steps if session else 0,
+                    "total_reward": session.total_reward if session else 0.0,
+                }
+                if db_session_id:
+                    end_msg["session_id"] = db_session_id
+                await _safe_send(ws, end_msg)
 
         except WebSocketDisconnect:
             final_status = SessionStatus.CANCELLED
